@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mind Map Visualization</title>
+    <script src="https://unpkg.com/cytoscape/dist/cytoscape.min.js"></script>
+</head>
+<body>
+    <h1>Mind Map</h1>
+    <div id="cy" style="width: 100%; height: 600px;"></div>
+
+    <script>
+        // Fetch the mind map data from the backend
+        fetch('/api/get-mindmap/')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Check if data.nodes and data.edges exist before using them
+                const nodes = data.nodes ? data.nodes : [];
+                const edges = data.edges ? data.edges : [];
+
+                console.log("Nodes: ", nodes);  // Log nodes
+                console.log("Edges: ", edges);  // Log edges
+
+                var cy = cytoscape({
+                    container: document.getElementById('cy'),
+                    elements: {
+                        nodes: nodes.map(node => ({ data: { id: node.id, label: node.label } })),
+                        edges: edges.map(edge => ({ data: { source: edge.source, target: edge.target } }))
+                    },
+                    style: [
+                        {
+                            selector: 'node',
+                            style: {
+                                'background-color': '#666',
+                                'label': 'data(label)'
+                            }
+                        },
+                        {
+                            selector: 'edge',
+                            style: {
+                                'width': 2,
+                                'line-color': '#ccc'
+                            }
+                        }
+                    ],
+                    layout: {
+                        name: 'breadthfirst'  // Layout style, adjust as needed
+                    }
+                });
+            })
+            .catch(error => console.error('Error fetching data:', error));  // Improved error handling
+    </script>
+</body>
+</html>
