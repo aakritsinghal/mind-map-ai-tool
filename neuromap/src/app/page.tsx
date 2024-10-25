@@ -122,32 +122,34 @@ export default function VoiceNotes() {
             </TabsTrigger>
           </TabsList>
           <TabsContent value="voice" className="p-6">
-            <div className="space-y-4">
-              <div className="flex justify-center">
+            <div className="space-y-4 flex flex-col items-center justify-center h-64">
+              <Button
+                onClick={isRecording ? stopRecording : startRecording}
+                className={`
+                  w-24 h-24 rounded-full 
+                  flex items-center justify-center
+                  transition-all duration-300 ease-in-out
+                  ${isRecording 
+                    ? 'bg-red-50 border-4 border-red-500 text-red-500 animate-pulse' 
+                    : 'bg-white border-2 border-casca-blue text-casca-blue hover:bg-casca-blue/10'
+                  }
+                `}
+              >
                 {isRecording ? (
-                  <Button onClick={stopRecording} variant="destructive" size="lg" className="rounded-full">
-                    <StopCircle className="w-6 h-6 mr-2" />
-                    Stop Recording
-                  </Button>
+                  <StopCircle className="w-12 h-12" />
                 ) : (
-                  <Button onClick={startRecording} variant="default" size="lg" className="rounded-full">
-                    <Mic className="w-6 h-6 mr-2" />
-                    Start Recording
-                  </Button>
+                  <Mic className="w-12 h-12" />
                 )}
-              </div>
-              <div className="bg-white bg-opacity-50 rounded-xl p-4 h-48 overflow-auto">
-                <p className="text-gray-700">{transcript}</p>
-              </div>
+              </Button>
               {isUpsertingText && (
-                <div className="flex items-center justify-center space-x-2 text-blue-600">
+                <div className="flex items-center justify-center space-x-2 text-casca-blue">
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Saving speech to text...</span>
+                  <span>Saving your thoughts...</span>
                 </div>
               )}
               {upsertSuccess && (
-                <div className="text-center text-green-600">
-                  Speech to text saved successfully!
+                <div className="text-center text-emerald-600">
+                  Thoughts saved successfully!
                 </div>
               )}
             </div>
