@@ -256,22 +256,23 @@ model MindMapNode {
 }
 
 model Todo {
-  id         String   @id
-  userId     String
-  text       String
-  priority   Int
-  parentId   String?
-  isSubtask  Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime
-  Todo       Todo?    @relation("TodoToTodo", fields: [parentId], references: [id], onDelete: Cascade)
-  other_Todo Todo[]   @relation("TodoToTodo")
-  User       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String   @id @default(cuid())
+  userId    String
+  text      String
+  priority  Int
+  parentId  String?
+  isSubtask Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent    Todo?    @relation("SubTasks", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks  Todo[]   @relation("SubTasks")
 
-  @@index([parentId])
   @@index([userId])
+  @@index([parentId])
   @@schema("prisma")
 }
+
 
 enum NodeType {
   main

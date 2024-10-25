@@ -1,12 +1,16 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import React from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSession, signIn, signOut } from "next-auth/react"
-import { Mic, StopCircle, BrainCircuit, CheckSquare, Plus, LogIn, LogOut, Loader2 } from 'lucide-react'
+import { Mic, StopCircle, BrainCircuit, CheckSquare, Plus, ChevronDown, ChevronRight, Trash2, LogIn, LogOut, Loader2, Flag, MessageSquare, Send } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Label } from "@/components/ui/label"
 import { api } from "@/trpc/react"
+import { cn } from "@/lib/utils"
 
 // Simulated AI function to extract topics from text
 const extractTopics = (text: string) => {
@@ -14,19 +18,77 @@ const extractTopics = (text: string) => {
   return topics.slice(0, 5) // Return up to 5 topics
 }
 
+// Update the Task type to match the structure from the server
+type Task = {
+  id: string;
+  text: string;
+  priority: number;
+  subtasks: Task[];
+  isExpanded: boolean;
+  isSubtask?: boolean; // Add this to match the server response
+};
+
+// Add this new component for a custom SelectItem
+const PrioritySelectItem = React.forwardRef<HTMLDivElement, React.ComponentPropsWithoutRef<typeof SelectItem> & { icon: React.ReactNode }>(
+  ({ className, children, icon, ...props }, ref) => {
+    return (
+      <SelectItem
+        ref={ref}
+        className={cn(
+          "flex items-center space-x-2 rounded-md p-2",
+          className
+        )}
+        {...props}
+      >
+        <div className="flex items-center space-x-2 flex-grow">
+          {icon}
+          <span>{children}</span>
+        </div>
+      </SelectItem>
+    )
+  }
+)
+PrioritySelectItem.displayName = "PrioritySelectItem"
+
 export default function VoiceNotes() {
   const { data: session, status } = useSession()
   const [activeTab, setActiveTab] = useState('voice')
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [topics, setTopics] = useState<string[]>([])
-  const [todos, setTodos] = useState<{ text: string; priority: number }[]>([])
-  const [newTodo, setNewTodo] = useState('')
+  const [tasks, setTasks] = useState<Task[]>([])
+  const [newTask, setNewTask] = useState('')
+  const [newTaskPriority, setNewTaskPriority] = useState(3)
   const recognitionRef = useRef<any>(null)
   const [isUpsertingText, setIsUpsertingText] = useState(false)
   const [upsertSuccess, setUpsertSuccess] = useState(false)
+  const [isExtractingTodos, setIsExtractingTodos] = useState(false)
+  const [isLoadingTasks, setIsLoadingTasks] = useState(true)
+  const [isAddingTask, setIsAddingTask] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
+  const audioChunks = useRef<Blob[]>([])
+  const mediaRecorder = useRef<MediaRecorder | null>(null)
+  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant', content: string }>>([])
+  const [currentMessage, setCurrentMessage] = useState('')
+  const [streamingMessage, setStreamingMessage] = useState('')
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [isIndexingThoughts, setIsIndexingThoughts] = useState(false)
 
   const saveSpeechToText = api.speech.saveSpeechToText.useMutation()
+  const extractAndSaveTodos = api.todo.extractAndSaveTodos.useMutation()
+  const createTodo = api.todo.createTodo.useMutation()
+  const getUserTodos = api.todo.getUserTodos.useQuery(undefined, {
+    enabled: !!session?.user?.id,
+  });
+  const transcribeAudio = api.transcription.transcribeAudio.useMutation()
+  const mindchatMutation = api.mindchat.chat.useMutation()
+  const upsertTranscript = api.pinecone.upsertTranscript.useMutation()
+
+  const priorityOptions = [
+    { value: "1", label: "High", color: "text-red-500" },
+    { value: "2", label: "Medium", color: "text-yellow-500" },
+    { value: "3", label: "Low", color: "text-green-500" },
+  ]
 
   useEffect(() => {
     if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
@@ -45,37 +107,244 @@ export default function VoiceNotes() {
     }
   }, [])
 
+  useEffect(() => {
+    if (getUserTodos.data) {
+      setTasks(getUserTodos.data.map(todo => ({
+        ...todo,
+        isExpanded: false,
+        subtasks: todo.subtasks.map(subtask => ({
+          ...subtask,
+          isExpanded: false,
+          subtasks: []
+        }))
+      })));
+      setIsLoadingTasks(false);
+    }
+  }, [getUserTodos.data]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'MediaRecorder' in window) {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(stream => {
+          mediaRecorder.current = new MediaRecorder(stream)
+          
+          mediaRecorder.current.ondataavailable = (event) => {
+            audioChunks.current.push(event.data)
+          }
+
+          mediaRecorder.current.onstop = async () => {
+            const audioBlob = new Blob(audioChunks.current, { type: 'audio/webm' })
+            audioChunks.current = []
+            
+            setIsTranscribing(true)
+            try {
+              const audioFile = new File([audioBlob], "recording.webm", { type: 'audio/webm' })
+              
+              const reader = new FileReader();
+              reader.readAsDataURL(audioFile);
+              reader.onloadend = async () => {
+                const base64Audio = reader.result as string;
+                
+                const result = await transcribeAudio.mutateAsync({ audio: base64Audio });
+                setTranscript(result.text)
+
+                // Save speech to text
+                setIsUpsertingText(true)
+                await saveSpeechToText.mutateAsync({ text: result.text })
+                setIsUpsertingText(false)
+                setUpsertSuccess(true)
+
+                // Extract and save todos
+                setIsExtractingTodos(true)
+                await extractAndSaveTodos.mutateAsync({ text: result.text })
+                setIsExtractingTodos(false)
+
+                // Index thoughts in Pinecone
+                setIsIndexingThoughts(true)
+                await upsertTranscript.mutateAsync({ text: result.text })
+                setIsIndexingThoughts(false)
+
+                // Refresh the todo list
+                getUserTodos.refetch()
+
+                // Extract topics for mindmap
+                const extractedTopics = extractTopics(result.text)
+                setTopics(extractedTopics)
+              }
+            } catch (error) {
+              console.error('Transcription error:', error)
+            } finally {
+              setIsTranscribing(false)
+              setIsIndexingThoughts(false)
+            }
+          }
+        })
+        .catch(err => console.error('Error accessing microphone:', err))
+    }
+  }, [])
+
   const startRecording = () => {
     setIsRecording(true)
-    recognitionRef.current?.start()
+    audioChunks.current = []
+    mediaRecorder.current?.start()
   }
 
-  const stopRecording = async () => {
+  const stopRecording = () => {
     setIsRecording(false)
-    recognitionRef.current?.stop()
-    const extractedTopics = extractTopics(transcript)
-    setTopics(extractedTopics)
+    mediaRecorder.current?.stop()
+  }
 
-    // Save the transcript to the database using tRPC
-    setIsUpsertingText(true)
-    setUpsertSuccess(false)
+  const addTask = async (parentId: string | null = null) => {
+    if (newTask.trim()) {
+      setIsAddingTask(true)
+      try {
+        const savedTask = await createTodo.mutateAsync({
+          text: newTask,
+          priority: newTaskPriority,
+          parentId: parentId
+        });
+
+        if (parentId) {
+          setTasks(tasks.map(task => {
+            if (task.id === parentId) {
+              return { ...task, subtasks: [...task.subtasks, { ...savedTask, isExpanded: false, subtasks: [] }] };
+            }
+            return task;
+          }));
+        } else {
+          setTasks(prevTasks => [...prevTasks, { ...savedTask, isExpanded: false, subtasks: [] }]);
+        }
+
+        setNewTask('');
+        setNewTaskPriority(3);
+        getUserTodos.refetch(); // Refetch todos after adding a new task
+      } catch (error) {
+        console.error('Error adding task:', error);
+      } finally {
+        setIsAddingTask(false)
+      }
+    }
+  };
+
+  const toggleExpand = (id: string) => {
+    setTasks(tasks.map(task => {
+      if (task.id === id) {
+        return { ...task, isExpanded: !task.isExpanded }
+      }
+      return task
+    }))
+  }
+
+  const deleteTask = async (id: string, parentId: string | null = null) => {
     try {
-      await saveSpeechToText.mutateAsync({ text: transcript })
-      console.log('Speech to text saved successfully')
-      setUpsertSuccess(true)
+      await api.todo.deleteTodo.mutate({ id });
+      if (parentId) {
+        setTasks(tasks.map(task => {
+          if (task.id === parentId) {
+            return { ...task, subtasks: task.subtasks.filter(subtask => subtask.id !== id) };
+          }
+          return task;
+        }));
+      } else {
+        setTasks(tasks.filter(task => task.id !== id));
+      }
+      getUserTodos.refetch(); // Refetch todos after deleting a task
     } catch (error) {
-      console.error('Error saving speech to text:', error)
-    } finally {
-      setIsUpsertingText(false)
+      console.error('Error deleting task:', error);
     }
-  }
+  };
 
-  const addTodo = () => {
-    if (newTodo.trim()) {
-      setTodos([...todos, { text: newTodo, priority: todos.length + 1 }])
-      setNewTodo('')
+  const renderTask = (task: Task, level: number = 0, parentId: string | null = null) => (
+    <li
+      key={task.id}
+      className={cn(
+        `bg-white rounded-xl p-4 mb-2 shadow-sm`,
+        `border-l-4`,
+        task.priority === 1 ? "border-red-500" :
+        task.priority === 2 ? "border-yellow-500" : "border-green-500",
+        level > 0 ? 'ml-6' : ''
+      )}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-2">
+          {task.subtasks.length > 0 && (
+            <Button
+              onClick={() => toggleExpand(task.id)}
+              variant="ghost"
+              size="sm"
+              className="p-0 h-6 w-6"
+            >
+              {task.isExpanded ? (
+                <ChevronDown className="w-4 h-4" />
+              ) : (
+                <ChevronRight className="w-4 h-4" />
+              )}
+            </Button>
+          )}
+          {task.subtasks.length === 0 && <div className="w-6" />}
+          <span>{task.text}</span>
+          {task.subtasks.length > 0 && (
+            <span className="text-xs text-gray-500">
+              ({task.subtasks.length} subtask{task.subtasks.length !== 1 ? 's' : ''})
+            </span>
+          )}
+        </div>
+        <div className="flex items-center space-x-2">
+          <Flag 
+            className={cn(
+              "w-4 h-4",
+              task.priority === 1 ? "text-red-500" : 
+              task.priority === 2 ? "text-yellow-500" : "text-green-500"
+            )}
+          />
+          <Button onClick={() => deleteTask(task.id, parentId)} variant="ghost" size="sm">
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        </div>
+      </div>
+      {task.isExpanded && task.subtasks.length > 0 && (
+        <ul className="mt-2 space-y-2">
+          {task.subtasks
+            .sort((a, b) => a.priority - b.priority)
+            .map(subtask => renderTask(subtask, level + 1, task.id))}
+        </ul>
+      )}
+    </li>
+  )
+
+  const sendMessage = useCallback(async () => {
+    if (currentMessage.trim()) {
+      const newUserMessage = { role: 'user' as const, content: currentMessage };
+      setChatMessages(prev => [...prev, newUserMessage]);
+      setCurrentMessage('');
+      setIsStreaming(true);
+      setStreamingMessage('');
+
+      try {
+        const response = await mindchatMutation.mutateAsync({
+          message: currentMessage,
+          history: chatMessages
+        });
+
+        // Assuming the response is a string, we'll split it into words
+        const words = response.split(' ');
+
+        // Simulate streaming by adding words with a delay
+        for (const word of words) {
+          await new Promise(resolve => setTimeout(resolve, 50)); // Delay between words
+          setStreamingMessage(prev => prev + word + ' ');
+        }
+
+        setChatMessages(prev => [...prev, { role: 'assistant', content: response }]);
+      } catch (error) {
+        console.error('Error in Mindchat:', error);
+        setChatMessages(prev => [...prev, { role: 'assistant', content: "I'm sorry, I encountered an error. Please try again." }]);
+      } finally {
+        setIsStreaming(false);
+        setStreamingMessage('');
+      }
     }
-  }
+  }, [currentMessage, chatMessages, mindchatMutation]);
 
   if (status === "loading") {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>
@@ -107,7 +376,7 @@ export default function VoiceNotes() {
           </Button>
         </div>
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3 bg-white bg-opacity-50">
+          <TabsList className="grid w-full grid-cols-4 bg-white bg-opacity-50">
             <TabsTrigger value="voice" className="data-[state=active]:bg-white data-[state=active]:text-black">
               <Mic className="w-5 h-5 mr-2" />
               Voice Input
@@ -119,6 +388,10 @@ export default function VoiceNotes() {
             <TabsTrigger value="todo" className="data-[state=active]:bg-white data-[state=active]:text-black">
               <CheckSquare className="w-5 h-5 mr-2" />
               Todo List
+            </TabsTrigger>
+            <TabsTrigger value="mindchat" className="data-[state=active]:bg-white data-[state=active]:text-black">
+              <MessageSquare className="w-5 h-5 mr-2" />
+              Mindchat
             </TabsTrigger>
           </TabsList>
           <TabsContent value="voice" className="p-6">
@@ -141,15 +414,33 @@ export default function VoiceNotes() {
                   <Mic className="w-12 h-12" />
                 )}
               </Button>
+              {isTranscribing && (
+                <div className="flex items-center justify-center space-x-2 text-casca-blue">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Transcribing audio...</span>
+                </div>
+              )}
               {isUpsertingText && (
                 <div className="flex items-center justify-center space-x-2 text-casca-blue">
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Saving your thoughts...</span>
+                  <span>Saving speech to text...</span>
+                </div>
+              )}
+              {isExtractingTodos && (
+                <div className="flex items-center justify-center space-x-2 text-casca-blue">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Extracting and saving todos...</span>
+                </div>
+              )}
+              {isIndexingThoughts && (
+                <div className="flex items-center justify-center space-x-2 text-casca-blue">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Indexing your thoughts...</span>
                 </div>
               )}
               {upsertSuccess && (
-                <div className="text-center text-emerald-600">
-                  Thoughts saved successfully!
+                <div className="text-green-500 font-semibold">
+                  Speech saved successfully!
                 </div>
               )}
             </div>
@@ -183,27 +474,90 @@ export default function VoiceNotes() {
               <div className="flex space-x-2">
                 <Input
                   type="text"
-                  placeholder="Add a new todo"
-                  value={newTodo}
-                  onChange={(e) => setNewTodo(e.target.value)}
+                  placeholder="Add a new task"
+                  value={newTask}
+                  onChange={(e) => setNewTask(e.target.value)}
                   className="flex-grow"
                 />
-                <Button onClick={addTodo}>
-                  <Plus className="w-5 h-5" />
-                  Add
+                <RadioGroup
+                  value={newTaskPriority.toString()}
+                  onValueChange={(value) => setNewTaskPriority(parseInt(value))}
+                  className="flex items-center space-x-2 bg-white p-1 rounded-md border border-gray-300"
+                >
+                  {priorityOptions.map((option) => (
+                    <div key={option.value} className="flex items-center space-x-1">
+                      <RadioGroupItem
+                        value={option.value}
+                        id={`priority-${option.value}`}
+                        className="sr-only"
+                      />
+                      <Label
+                        htmlFor={`priority-${option.value}`}
+                        className={cn(
+                          "flex items-center space-x-1 cursor-pointer rounded px-2 py-1",
+                          newTaskPriority.toString() === option.value ? "bg-gray-100" : ""
+                        )}
+                      >
+                        <Flag className={cn("w-4 h-4", option.color)} />
+                        <span className="text-sm">{option.label}</span>
+                      </Label>
+                    </div>
+                  ))}
+                </RadioGroup>
+                <Button onClick={() => addTask()} disabled={isAddingTask}>
+                  {isAddingTask ? (
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  ) : (
+                    <Plus className="w-5 h-5 mr-2" />
+                  )}
+                  {isAddingTask ? 'Adding...' : 'Add Task'}
                 </Button>
               </div>
-              <ul className="space-y-2">
-                {todos.sort((a, b) => a.priority - b.priority).map((todo, index) => (
-                  <li
-                    key={index}
-                    className="bg-white bg-opacity-50 rounded-xl p-4 flex items-center justify-between"
-                  >
-                    <span>{todo.text}</span>
-                    <span className="text-sm text-gray-500">Priority: {todo.priority}</span>
-                  </li>
+              {isLoadingTasks ? (
+                <div className="flex items-center justify-center h-32">
+                  <Loader2 className="w-8 h-8 animate-spin text-casca-blue" />
+                </div>
+              ) : (
+                <ul className="space-y-2 max-h-[calc(100vh-250px)] overflow-y-auto pr-4">
+                  {tasks
+                    .sort((a, b) => a.priority - b.priority)
+                    .map(task => renderTask(task))}
+                </ul>
+              )}
+            </div>
+          </TabsContent>
+          <TabsContent value="mindchat" className="p-6">
+            <div className="space-y-4 h-[calc(100vh-250px)] flex flex-col">
+              <div className="flex-grow overflow-y-auto space-y-4 p-4 bg-white bg-opacity-50 rounded-xl">
+                {chatMessages.map((message, index) => (
+                  <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[70%] p-3 rounded-xl ${message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}>
+                      {message.content}
+                    </div>
+                  </div>
                 ))}
-              </ul>
+                {isStreaming && (
+                  <div className="flex justify-start">
+                    <div className="max-w-[70%] p-3 rounded-xl bg-gray-200">
+                      {streamingMessage}
+                      <span className="animate-pulse">▋</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="flex space-x-2">
+                <Input
+                  type="text"
+                  placeholder="Chat with your memories..."
+                  value={currentMessage}
+                  onChange={(e) => setCurrentMessage(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                  className="flex-grow"
+                />
+                <Button onClick={sendMessage} disabled={isStreaming}>
+                  <Send className="w-5 h-5" />
+                </Button>
+              </div>
             </div>
           </TabsContent>
         </Tabs>
