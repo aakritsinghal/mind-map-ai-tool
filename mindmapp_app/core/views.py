@@ -9,52 +9,84 @@ import openai
 from django.shortcuts import render
 from django.core.cache import cache
 from django.conf import settings
+import json
+from supabase import create_client
+import uuid
+from datetime import datetime
+
 
 # Initialize Sentence-BERT model for similarity
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Set up your OpenAI API key
 openai.api_key = settings.OPENAI_API_KEY
+supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 
 def mind_map_view(request):
     return render(request, 'core/mindmap.html')
 
+def generate_openai_embedding(text):
+    response = openai.Embedding.create(input=text, model="text-embedding-ada-002")
+    return response["data"][0]["embedding"]
 
 class UploadTextView(APIView):  # Changed the view name to UploadTextView for testing with text
     def post(self, request, *args, **kwargs):
         # Get transcribed text from the POST request instead of handling audio for now
         transcribed_text = request.data.get('transcription')
+        # print(f"Transcribed Text: {transcribed_text}")
+        user_id = "cm2p6n6400000ayukf70pcck8" #harcoded for now, will be dynamic later - request.user.id
+        print(f"User ID: {user_id}")
 
         if not transcribed_text:
             return Response({"error": "No transcription provided."}, status=400)
+        
+        existing_main_topics = self.get_existing_main_topics(user_id)
 
-        # Step 2: Use GPT-4 to segment the transcribed text into topics, subtopics, and info points
-        structured_output = self.generate_topic_structure(transcribed_text)
+        json_output = self.generate_topic_structure(transcribed_text, existing_main_topics)
+        segments = self.parse_gpt_output(json_output, user_id)
 
-        # Step 3: Parse the structured output from GPT-4
-        segments = self.parse_gpt_output(structured_output)
+        cache.set(f'latest_mind_map_{user_id}', segments, timeout=None)
 
-        # Step 4: Use BERT to create embeddings for each segment and calculate similarities
-        embeddings = self.generate_bert_embeddings(segments)
-
-        # Step 5: Calculate additional relationships between segments using BERT embeddings
-        mind_map = self.generate_mind_map_with_similarity(segments, embeddings)
-
-        cache.set('latest_mind_map', mind_map, timeout=None)
-
-        return Response(mind_map)
+        return Response(segments)
+    
+    def get_existing_main_topics(self, user_id):
+        """Fetch all existing main topics for a user from the database."""
+        response = supabase.table('MindMapNode').select("*").eq("user_id", user_id).eq("type", "main").execute()
+        main_topics = [topic["name"] for topic in response.data] if response.data else []
+        return main_topics
 
     # Use GPT-4 to segment the transcription
-    def generate_topic_structure(self, transcription):
+    def generate_topic_structure(self, transcription, existing_main_topics):
+        """Generate topic structure with existing main topics included in the prompt."""
+        existing_main_topics_str = "\n".join(f"- {topic}" for topic in existing_main_topics) or "None"
         prompt = f"""
-        Break the following transcription down into main topics, subtopics, and detailed information points:
+        Break the following transcription down into main topics, subtopics, and detailed information points.
+        Each main topic is the primary subject, each subtopic is a subcategory under the main topic, and each information point is a specific detail related to the subtopic from the transcription.
+        If the transcription mentions anything that is very similar to an existing main topic, use that instead of creating a new one.
+        Return the result as a valid JSON object structured like this:
+        {{
+            "main_topics": [
+                {{
+                    "name": "Main Topic",
+                    "subtopics": [
+                        {{
+                            "name": "Subtopic",
+                            "details": ["Detail 1", "Detail 2"]
+                        }}
+                    ]
+                }}
+            ]
+        }}
+        Here are the existing main topics:
+        {existing_main_topics_str}
+
+        Here is the transcription:
         {transcription}
         """
 
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",  # Or "gpt-4"
             messages=[
-                {"role": "system", "content": "You are tasked with analyzing a transcription and organizing it into a structured mind map."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=1000,
@@ -65,203 +97,138 @@ class UploadTextView(APIView):  # Changed the view name to UploadTextView for te
         structured_output = response['choices'][0]['message']['content']
 
         # Log the output to inspect it
-        print("GPT-4 Structured Output: ", structured_output)
+        # print("GPT-4 Structured Output: ", structured_output)
 
         return structured_output
 
     # Parse the output from GPT-4 into segments (main topics, subtopics, info points)
-    def parse_gpt_output(self, llm_output):
-        segments = []
-        lines = llm_output.splitlines()
+    def parse_gpt_output(self, json_output, user_id):
+        print("GPT-4 JSON Output: ", json_output)
+        try:
+            mind_map_data = json.loads(json_output)
+            nodes, edges = [], []
 
-        for line in lines:
-            line = line.strip()
+            all_subtopics = []
 
-            # Collect main topics
-            if line.startswith("Main Topic:"):
-                main_topic = line.replace("Main Topic:", "").strip()
-                segments.append(main_topic)
+            for main_topic in mind_map_data.get("main_topics", []):
+                main_topic_embedding = generate_openai_embedding(main_topic["name"])
 
-            # Collect subtopics
-            elif line.startswith("- Subtopic:"):
-                subtopic = line.replace("- Subtopic:", "").strip()
-                segments.append(subtopic)
+                # Check if main topic already exists
+                existing_main_topic = self.find_similar_topic(main_topic_embedding, user_id, topic_type="main", threshold=0.8)
+                if existing_main_topic:
+                    main_topic_node = existing_main_topic
+                else:
+                    main_topic_node = self.save_node(user_id, main_topic["name"], "main", main_topic_embedding)
+                    if main_topic_node:
+                        nodes.append(main_topic_node)
+                    else:
+                        continue
 
-            # Collect detailed information points
-            elif line.startswith("- Detailed Information:"):
-                continue  # Skip this label since it's descriptive
-            elif line.startswith("-"):
-                info_point = line.replace("-", "").strip()
-                segments.append(info_point)
+                # Process subtopics
+                for subtopic in main_topic.get("subtopics", []):
+                    subtopic_embedding = generate_openai_embedding(subtopic["name"])
 
-        # Log to inspect the parsed segments
-        print("Parsed Segments: ", segments)
+                    subtopic_node = self.save_node(
+                        user_id=user_id,
+                        name=subtopic["name"],
+                        type="subtopic",
+                        embedding=subtopic_embedding,
+                        parent_id=main_topic_node["id"],
+                        info_points=subtopic.get("details", [])
+                    )
+                    if subtopic_node:
+                        nodes.append(subtopic_node)
+                        all_subtopics.append(subtopic_node)
+                    else:
+                        continue
 
-        return segments
+                    # Create or retrieve edge between main topic and subtopic
+                    edges.append(self.save_edge(user_id, main_topic_node["id"], subtopic_node["id"]))
 
-    # Use BERT to generate embeddings for each segment
-    def generate_bert_embeddings(self, segments):
-        if not segments or len(segments) == 0:
-            raise ValueError("No segments to encode")
+            # checking another subtopic connections
+            for i, sub1 in enumerate(all_subtopics):
+                for sub2 in all_subtopics[i+1:]:
+                    similarity = cosine_similarity([sub1["embedding"]], [sub2["embedding"]])[0][0]
+                    if similarity >= 0.6:
+                        existing_edge = supabase.table("MindMapEdge").select("*").eq("source_id", sub1["id"]).eq("target_id", sub2["id"]).execute()
+                        if existing_edge.data:
+                            continue
+                        edge = self.save_edge(user_id, sub1["id"], sub2["id"])
+                        if edge:
+                            edges.append(edge)
+                        
+
+            return {"nodes": nodes, "edges": edges}
+
+        except json.JSONDecodeError:
+            return {"error": "Invalid JSON format returned from GPT"}
+
+        
+    def find_similar_topic(self, embedding, user_id, topic_type="main", parent_id=None, threshold=0.8):
+        # Retrieve all topics of the specified type for the user from Supabase
+        query = supabase.table("MindMapNode").select("*").eq("user_id", user_id).eq("type", topic_type)
+        if parent_id:
+            query = query.eq("parent_id", parent_id)
+        
+        response = query.execute()
+        topics = response.data
+
+        # If no topics exist, return None
+        if not topics:
+            return None
+
+        # Collect embeddings of topics for similarity comparison
+        topic_embeddings = [topic["embedding"] for topic in topics]
+        # Calculate cosine similarities
+        similarities = cosine_similarity([embedding], topic_embeddings)[0]
+        max_similarity_index = similarities.argmax()
+
+        # Check if the highest similarity exceeds the threshold
+        if similarities[max_similarity_index] >= threshold:
+            # Return the most similar topic
+            similar_topic = topics[max_similarity_index]
+            return similar_topic
+        return None
+        
     
-        embeddings = model.encode(segments)
-
-        # Ensure the embeddings are reshaped correctly if necessary
-        if embeddings.ndim == 1:
-            embeddings = embeddings.reshape(1, -1)
-
-        return embeddings
-
-    # Generate the mind map by calculating similarity between segments using BERT
-    def generate_mind_map_with_similarity(self, segments, embeddings):
-        if len(embeddings) == 0 or embeddings.ndim == 1:
-            raise ValueError("Embeddings array is either empty or 1D")
-
-        # Now calculate cosine similarity
-        similarity_matrix = cosine_similarity(embeddings)
-
-        # Lower the threshold if needed (currently 0.7)
-        threshold = 0.2
-        connections = []
-        num_segments = len(segments)
-
-        # Log similarity values
-        print("Similarity Matrix: ", similarity_matrix)
-
-        for i in range(num_segments):
-            for j in range(i + 1, num_segments):
-                if similarity_matrix[i][j] > threshold:
-                    connections.append({
-                        "source": segments[i],
-                        "target": segments[j],
-                        "similarity": similarity_matrix[i][j]
-                    })
-
-        # Generate the final mind map with nodes and edges
-        mind_map = {
-            "nodes": [{"id": s, "label": s} for s in segments],
-            "edges": [{"source": c["source"], "target": c["target"]} for c in connections]
+    def save_node(self, user_id, name, type, embedding, parent_id=None, info_points=None):
+        node = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "name": name,
+            "type": type,
+            "embedding": embedding,
+            "info_points": info_points if info_points else [],
+            "parent_id": parent_id,
+            "edges_to": None,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat()
         }
-
-        print("Mind Map: ", mind_map)
-
-        return mind_map
+        node = supabase.table("MindMapNode").insert(node).execute()
+        return node.data[0]
     
+    def save_edge(self, user_id, source_id, target_id):
+        edge = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "source_id": source_id,
+            "target_id": target_id,
+            "created_at": datetime.now().isoformat(),
+        }
+        edge = supabase.table("MindMapEdge").insert(edge).execute()
+        edge_id = edge.data[0]["id"]
+        source_node = supabase.table("MindMapNode").select("edges_to").eq("id", source_id).execute()
+        current_edges = source_node.data[0]["edges_to"] if source_node.data[0]["edges_to"] else []
+        current_edges.append(edge_id)
+        updated_node = supabase.table("MindMapNode").update({"edges_to": current_edges}).eq("id", source_id).execute()
+
+        return edge.data[0]
+
+
 class MindMapView(APIView):
     def get(self, request, *args, **kwargs):
-        mind_map = cache.get('latest_mind_map')
+        user_id = "cm2p6n6400000ayukf70pcck8" #should be request.user.id
+        mind_map = cache.get(f'latest_mind_map_{user_id}')
         if mind_map is None:
             return Response({"error": "No mind map available."}, status=404)
         return Response(mind_map)
-
-# class UploadAudioView(APIView):
-#     def post(self, request, *args, **kwargs):
-#         serializer = AudioFileSerializer(data=request.data)
-#         if serializer.is_valid():
-#             audio_file = serializer.save()
-
-#             # Step 1: Transcribe the uploaded audio
-#             transcript = self.transcribe_audio(audio_file.file.path)
-#             audio_file.transcription = transcript
-#             audio_file.save()
-
-#             # Step 2: Use GPT-4 to segment the transcript into topics, subtopics, and info points
-#             structured_output = self.generate_topic_structure(transcript)
-
-#             # Step 3: Parse the structured output from GPT-4
-#             segments = self.parse_gpt_output(structured_output)
-
-#             # Step 4: Use BERT to create embeddings for each segment and calculate similarities
-#             embeddings = self.generate_bert_embeddings(segments)
-
-#             # Step 5: Calculate additional relationships between segments using BERT embeddings
-#             mind_map = self.generate_mind_map_with_similarity(segments, embeddings)
-
-#             return Response(mind_map)
-#         return Response(serializer.errors)
-
-#     # Transcribe the audio using Google Cloud Speech-to-Text
-#     def transcribe_audio(self, audio_file_path):
-#         client = speech.SpeechClient()
-#         with open(audio_file_path, "rb") as audio_file:
-#             content = audio_file.read()
-
-#         audio = speech.RecognitionAudio(content=content)
-#         config = speech.RecognitionConfig(
-#             encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-#             language_code="en-US"
-#         )
-
-#         response = client.recognize(config=config, audio=audio)
-#         transcript = ""
-#         for result in response.results:
-#             transcript += result.alternatives[0].transcript + "\n"
-#         return transcript
-
-#     # Use GPT-4 to segment the transcription
-#     def generate_topic_structure(self, transcription):
-#         prompt = f"""
-#         You are tasked with analyzing a transcription and organizing it into a structured mind map.
-#         Break the transcription down into main topics, subtopics, and detailed information points.
-#         Here is the transcription:
-#         {transcription}
-#         """
-
-#         response = openai.Completion.create(
-#             engine="gpt-3.5-turbo",
-#             prompt=prompt,
-#             max_tokens=1000,
-#             temperature=0.7
-#         )
-
-#         return response.choices[0].text
-
-#     # Parse the output from GPT-4 into segments (main topics, subtopics, info points)
-#     def parse_gpt_output(self, llm_output):
-#         segments = []
-#         current_main_topic = None
-#         current_subtopic = None
-
-#         lines = llm_output.splitlines()
-#         for line in lines:
-#             line = line.strip()
-#             if line.startswith("- Main Topic:"):
-#                 current_main_topic = line.replace("- Main Topic:", "").strip()
-#                 segments.append(current_main_topic)
-#             elif line.startswith("- Subtopic:"):
-#                 current_subtopic = line.replace("- Subtopic:", "").strip()
-#                 segments.append(current_subtopic)
-#             elif line.startswith("- Information point:"):
-#                 info_point = line.replace("- Information point:", "").strip()
-#                 segments.append(info_point)
-#         return segments
-
-#     # Use BERT to generate embeddings for each segment
-#     def generate_bert_embeddings(self, segments):
-#         embeddings = model.encode(segments)
-#         return embeddings
-
-#     # Generate the mind map by calculating similarity between segments using BERT
-#     def generate_mind_map_with_similarity(self, segments, embeddings):
-#         similarity_matrix = cosine_similarity(embeddings)
-
-#         # Set a threshold for similarity connections
-#         threshold = 0.7
-#         connections = []
-#         num_segments = len(segments)
-#         for i in range(num_segments):
-#             for j in range(i + 1, num_segments):
-#                 if similarity_matrix[i][j] > threshold:
-#                     connections.append({
-#                         "source": segments[i],
-#                         "target": segments[j],
-#                         "similarity": similarity_matrix[i][j]
-#                     })
-
-#         # Generate the final mind map with nodes and edges
-#         mind_map = {
-#             "nodes": [{"id": s, "label": s} for s in segments],
-#             "edges": [{"source": c["source"], "target": c["target"]} for c in connections]
-#         }
-
-#         return mind_map

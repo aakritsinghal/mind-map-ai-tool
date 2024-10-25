@@ -13,10 +13,17 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 from pathlib import Path
 import os
 from dotenv import load_dotenv
+from supabase import create_client
+import dj_database_url
 
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
+SUPABASE_URL = os.getenv('SUPABASE_URL')
+SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -46,6 +53,12 @@ INSTALLED_APPS = [
     'rest_framework',
     'core',
 ]
+
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    # Add other backends if necessary
+]
+
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -82,10 +95,7 @@ WSGI_APPLICATION = 'mindmapp_app.wsgi.application'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.config(default=os.getenv('DATABASE_URL'))
 }
 
 
