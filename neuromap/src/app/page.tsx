@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useSession, signIn, signOut } from "next-auth/react"
-import { Mic, StopCircle, BrainCircuit, CheckSquare, Plus, LogIn, LogOut } from 'lucide-react'
+import { Mic, StopCircle, BrainCircuit, CheckSquare, Plus, LogIn, LogOut, Loader2 } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { api } from "@/trpc/react"
 
 // Simulated AI function to extract topics from text
 const extractTopics = (text: string) => {
@@ -22,6 +23,10 @@ export default function VoiceNotes() {
   const [todos, setTodos] = useState<{ text: string; priority: number }[]>([])
   const [newTodo, setNewTodo] = useState('')
   const recognitionRef = useRef<any>(null)
+  const [isUpsertingText, setIsUpsertingText] = useState(false)
+  const [upsertSuccess, setUpsertSuccess] = useState(false)
+
+  const saveSpeechToText = api.speech.saveSpeechToText.useMutation()
 
   useEffect(() => {
     if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
@@ -45,11 +50,24 @@ export default function VoiceNotes() {
     recognitionRef.current?.start()
   }
 
-  const stopRecording = () => {
+  const stopRecording = async () => {
     setIsRecording(false)
     recognitionRef.current?.stop()
     const extractedTopics = extractTopics(transcript)
     setTopics(extractedTopics)
+
+    // Save the transcript to the database using tRPC
+    setIsUpsertingText(true)
+    setUpsertSuccess(false)
+    try {
+      await saveSpeechToText.mutateAsync({ text: transcript })
+      console.log('Speech to text saved successfully')
+      setUpsertSuccess(true)
+    } catch (error) {
+      console.error('Error saving speech to text:', error)
+    } finally {
+      setIsUpsertingText(false)
+    }
   }
 
   const addTodo = () => {
@@ -121,6 +139,17 @@ export default function VoiceNotes() {
               <div className="bg-white bg-opacity-50 rounded-xl p-4 h-48 overflow-auto">
                 <p className="text-gray-700">{transcript}</p>
               </div>
+              {isUpsertingText && (
+                <div className="flex items-center justify-center space-x-2 text-blue-600">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Saving speech to text...</span>
+                </div>
+              )}
+              {upsertSuccess && (
+                <div className="text-center text-green-600">
+                  Speech to text saved successfully!
+                </div>
+              )}
             </div>
           </TabsContent>
           <TabsContent value="mindmap" className="p-6">
