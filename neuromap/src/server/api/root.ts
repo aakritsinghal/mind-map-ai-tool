@@ -2,6 +2,10 @@ import { postRouter } from "~/server/api/routers/post";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 import { userRouter } from "./routers/user";
 import { speechRouter } from './routers/speechtotext'
+import { getTodoRouter } from './routers/todoRouter'
+import { transcriptionRouter } from './routers/transcribeAudio'
+import { mindchatRouter } from "./routers/mindchat";
+import { pineconeRouter } from "~/server/api/routers/pinecone";
 
 /**
  * This is the primary router for your server.
@@ -12,6 +16,10 @@ export const appRouter = createTRPCRouter({
   post: postRouter,
   user: userRouter,
   speech: speechRouter,
+  todo: getTodoRouter,
+  transcription: transcriptionRouter,
+  mindchat: mindchatRouter,
+  pinecone: pineconeRouter,
 });
 
 // export type definition of API
