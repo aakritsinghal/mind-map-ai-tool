@@ -72,6 +72,7 @@ export default function VoiceNotes() {
   const [currentMessage, setCurrentMessage] = useState('')
   const [streamingMessage, setStreamingMessage] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
+  const [isIndexingThoughts, setIsIndexingThoughts] = useState(false)
 
   const saveSpeechToText = api.speech.saveSpeechToText.useMutation()
   const extractAndSaveTodos = api.todo.extractAndSaveTodos.useMutation()
@@ -81,6 +82,7 @@ export default function VoiceNotes() {
   });
   const transcribeAudio = api.transcription.transcribeAudio.useMutation()
   const mindchatMutation = api.mindchat.chat.useMutation()
+  const upsertTranscript = api.pinecone.upsertTranscript.useMutation()
 
   const priorityOptions = [
     { value: "1", label: "High", color: "text-red-500" },
@@ -157,6 +159,11 @@ export default function VoiceNotes() {
                 await extractAndSaveTodos.mutateAsync({ text: result.text })
                 setIsExtractingTodos(false)
 
+                // Index thoughts in Pinecone
+                setIsIndexingThoughts(true)
+                await upsertTranscript.mutateAsync({ text: result.text })
+                setIsIndexingThoughts(false)
+
                 // Refresh the todo list
                 getUserTodos.refetch()
 
@@ -168,6 +175,7 @@ export default function VoiceNotes() {
               console.error('Transcription error:', error)
             } finally {
               setIsTranscribing(false)
+              setIsIndexingThoughts(false)
             }
           }
         })
@@ -422,6 +430,12 @@ export default function VoiceNotes() {
                 <div className="flex items-center justify-center space-x-2 text-casca-blue">
                   <Loader2 className="w-5 h-5 animate-spin" />
                   <span>Extracting and saving todos...</span>
+                </div>
+              )}
+              {isIndexingThoughts && (
+                <div className="flex items-center justify-center space-x-2 text-casca-blue">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Indexing your thoughts...</span>
                 </div>
               )}
               {upsertSuccess && (
