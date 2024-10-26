@@ -80,6 +80,7 @@ export default function VoiceNotes() {
   const [isProcessComplete, setIsProcessComplete] = useState(false);
   const [microphonePermission, setMicrophonePermission] = useState<PermissionState | null>(null);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
+  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
 
   const saveSpeechToText = api.speech.saveSpeechToText.useMutation()
   const extractAndSaveTodos = api.todo.extractAndSaveTodos.useMutation()
@@ -291,22 +292,41 @@ export default function VoiceNotes() {
     }))
   }
 
+  const deleteTodoMutation = api.todo.deleteTodo.useMutation({
+    onSuccess: () => {
+      // Refetch todos after successful deletion
+      getUserTodos.refetch();
+    },
+  });
+
   const deleteTask = async (id: string, parentId: string | null = null) => {
+    setDeletingTaskId(id);
     try {
-      await api.todo.deleteTodo.mutate({ id });
-      if (parentId) {
-        setTasks(tasks.map(task => {
-          if (task.id === parentId) {
-            return { ...task, subtasks: task.subtasks.filter(subtask => subtask.id !== id) };
-          }
-          return task;
-        }));
-      } else {
-        setTasks(tasks.filter(task => task.id !== id));
-      }
-      getUserTodos.refetch(); // Refetch todos after deleting a task
+      await deleteTodoMutation.mutateAsync({ id });
+      
+      // Update the frontend state
+      setTasks(prevTasks => {
+        const updateSubtasks = (tasks: Task[]): Task[] => {
+          return tasks.map(task => ({
+            ...task,
+            subtasks: task.subtasks.filter(subtask => subtask.id !== id)
+          }));
+        };
+
+        if (parentId) {
+          return prevTasks.map(task => 
+            task.id === parentId
+              ? { ...task, subtasks: updateSubtasks(task.subtasks) }
+              : task
+          );
+        } else {
+          return prevTasks.filter(task => task.id !== id);
+        }
+      });
     } catch (error) {
       console.error('Error deleting task:', error);
+    } finally {
+      setDeletingTaskId(null);
     }
   };
 
@@ -353,8 +373,17 @@ export default function VoiceNotes() {
               task.priority === 2 ? "text-yellow-500" : "text-green-500"
             )}
           />
-          <Button onClick={() => deleteTask(task.id, parentId)} variant="ghost" size="sm">
-            <Trash2 className="w-4 h-4" />
+          <Button 
+            onClick={() => deleteTask(task.id, parentId)} 
+            variant="ghost" 
+            size="sm"
+            disabled={deletingTaskId === task.id}
+          >
+            {deletingTaskId === task.id ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Trash2 className="w-4 h-4" />
+            )}
           </Button>
         </div>
       </div>

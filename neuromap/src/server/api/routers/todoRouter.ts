@@ -49,8 +49,22 @@ export const getTodoRouter = createTRPCRouter({
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const { id } = input;
+      const userId = ctx.session.user.id;
+
+      // First, delete all subtasks
+      await ctx.db.todo.deleteMany({
+        where: {
+          parentId: id,
+          userId: userId,
+        },
+      });
+
+      // Then delete the task itself
       return ctx.db.todo.delete({
-        where: { id },
+        where: {
+          id: id,
+          userId: userId,
+        },
       });
     }),
 
