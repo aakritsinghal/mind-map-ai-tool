@@ -34,7 +34,7 @@ class UploadTextView(APIView):  # Changed the view name to UploadTextView for te
         # Get transcribed text from the POST request instead of handling audio for now
         transcribed_text = request.data.get('transcription')
         # print(f"Transcribed Text: {transcribed_text}")
-        user_id = "cm2p6n6400000ayukf70pcck8" #harcoded for now, will be dynamic later - request.user.id
+        user_id = "cm2pfrfmz00001376ccihu39b" #harcoded for now, will be dynamic later - request.user.id
         print(f"User ID: {user_id}")
 
         if not transcribed_text:
@@ -114,7 +114,7 @@ class UploadTextView(APIView):  # Changed the view name to UploadTextView for te
                 main_topic_embedding = generate_openai_embedding(main_topic["name"])
 
                 # Check if main topic already exists
-                existing_main_topic = self.find_similar_topic(main_topic_embedding, user_id, topic_type="main", threshold=0.8)
+                existing_main_topic = self.find_similar_topic(main_topic_embedding, user_id, topic_type="main", threshold=0.5)
                 if existing_main_topic:
                     main_topic_node = existing_main_topic
                 else:
@@ -227,7 +227,7 @@ class UploadTextView(APIView):  # Changed the view name to UploadTextView for te
 
 class MindMapView(APIView):
     def get(self, request, *args, **kwargs):
-        user_id = "cm2p6n6400000ayukf70pcck8" #should be request.user.id
+        user_id = "cm2pfrfmz00001376ccihu39b" #should be request.user.id
         mind_map = cache.get(f'latest_mind_map_{user_id}')
         if mind_map is None:
             return Response({"error": "No mind map available."}, status=404)

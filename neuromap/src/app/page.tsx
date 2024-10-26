@@ -11,6 +11,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { api } from "@/trpc/react"
 import { cn } from "@/lib/utils"
+import MindMapGraph from "@/components/ui/MindMapGraph"
+import MindMapModal from "@/components/ui/MindMapModal"
 
 // Simulated AI function to extract topics from text
 const extractTopics = (text: string) => {
@@ -27,6 +29,7 @@ type Task = {
   isExpanded: boolean;
   isSubtask?: boolean; // Add this to match the server response
 };
+
 
 // Add this new component for a custom SelectItem
 const PrioritySelectItem = React.forwardRef<HTMLDivElement, React.ComponentPropsWithoutRef<typeof SelectItem> & { icon: React.ReactNode }>(
@@ -88,6 +91,14 @@ export default function VoiceNotes() {
   const mindchatMutation = api.mindchat.chat.useMutation()
   const upsertTranscript = api.pinecone.upsertTranscript.useMutation()
 
+  const userId = session?.user?.id || ''
+
+  const [mindMapData, setMindMapData] = useState<{ nodes: any[]; edges: any[] } | null>(null);
+  const getMindMap = api.mindMap.getMindMap.useQuery(
+    { userId: session?.user?.id },
+    { enabled: !!session?.user?.id }
+  );
+
   const priorityOptions = [
     { value: "1", label: "High", color: "text-red-500" },
     { value: "2", label: "Medium", color: "text-yellow-500" },
@@ -143,6 +154,12 @@ export default function VoiceNotes() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    if (getMindMap.data) {
+      setMindMapData(getMindMap.data);
+    }
+  }, [getMindMap.data]);
 
   useEffect(() => {
     if (getUserTodos.data) {
@@ -480,28 +497,13 @@ export default function VoiceNotes() {
             </div>
           </TabsContent>
           <TabsContent value="mindmap" className="p-6">
-            <div className="bg-white bg-opacity-50 rounded-xl p-4 h-96 flex items-center justify-center">
-              <svg width="100%" height="100%" viewBox="0 0 500 500">
-                <circle cx="250" cy="250" r="100" fill="rgba(147, 51, 234, 0.5)" />
-                {topics.map((topic, index) => {
-                  const angle = (index / topics.length) * Math.PI * 2
-                  const x = 250 + Math.cos(angle) * 150
-                  const y = 250 + Math.sin(angle) * 150
-                  return (
-                    <g key={index}>
-                      <line x1="250" y1="250" x2={x} y2={y} stroke="rgba(147, 51, 234, 0.5)" strokeWidth="2" />
-                      <circle cx={x} cy={y} r="40" fill="rgba(59, 130, 246, 0.5)" />
-                      <text x={x} y={y} textAnchor="middle" dy=".3em" fill="white" fontSize="12">
-                        {topic}
-                      </text>
-                    </g>
-                  )
-                })}
-                <text x="250" y="250" textAnchor="middle" dy=".3em" fill="white" fontSize="16">
-                  Main Topic
-                </text>
-              </svg>
-            </div>
+            <div className="bg-white bg-opacity-50 rounded-xl p-4 h-150">
+              {mindMapData ? (
+                <MindMapModal nodes={mindMapData.nodes} edges={mindMapData.edges} />
+              ) : (
+                <div>Loading mind map...</div>
+              )}
+          </div>
           </TabsContent>
           <TabsContent value="todo" className="p-6">
             <div className="space-y-4">
