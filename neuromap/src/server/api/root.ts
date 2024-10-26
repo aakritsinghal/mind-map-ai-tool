@@ -2,6 +2,7 @@ import { postRouter } from "~/server/api/routers/post";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 import { userRouter } from "./routers/user";
 import { speechRouter } from './routers/speechtotext'
+import { imageRouter } from './routers/imagetotext'
 import { getTodoRouter } from './routers/todoRouter'
 import { transcriptionRouter } from './routers/transcribeAudio'
 import { mindchatRouter } from "./routers/mindchat";
@@ -17,6 +18,7 @@ export const appRouter = createTRPCRouter({
   post: postRouter,
   user: userRouter,
   speech: speechRouter,
+  image: imageRouter,
   todo: getTodoRouter,
   transcription: transcriptionRouter,
   mindchat: mindchatRouter,
