@@ -3,7 +3,7 @@
 import React from 'react'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSession, signIn, signOut } from "next-auth/react"
-import { Mic, StopCircle, BrainCircuit, CheckSquare, Plus, ChevronDown, ChevronRight, Trash2, LogIn, LogOut, Loader2, Flag, MessageSquare, Send } from 'lucide-react'
+import { Mic, StopCircle, BrainCircuit, CheckSquare, Plus, ChevronDown, ChevronRight, Trash2, LogIn, LogOut, Loader2, Flag, MessageSquare, Send, Check } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -73,6 +73,8 @@ export default function VoiceNotes() {
   const [streamingMessage, setStreamingMessage] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [isIndexingThoughts, setIsIndexingThoughts] = useState(false)
+  const [processingStatus, setProcessingStatus] = useState<string | null>(null);
+  const [isProcessComplete, setIsProcessComplete] = useState(false);
 
   const saveSpeechToText = api.speech.saveSpeechToText.useMutation()
   const extractAndSaveTodos = api.todo.extractAndSaveTodos.useMutation()
@@ -136,7 +138,7 @@ export default function VoiceNotes() {
             const audioBlob = new Blob(audioChunks.current, { type: 'audio/webm' })
             audioChunks.current = []
             
-            setIsTranscribing(true)
+            setProcessingStatus("Processing audio...")
             try {
               const audioFile = new File([audioBlob], "recording.webm", { type: 'audio/webm' })
               
@@ -145,24 +147,18 @@ export default function VoiceNotes() {
               reader.onloadend = async () => {
                 const base64Audio = reader.result as string;
                 
+                setProcessingStatus("Transcribing audio...")
                 const result = await transcribeAudio.mutateAsync({ audio: base64Audio });
                 setTranscript(result.text)
 
-                // Save speech to text
-                setIsUpsertingText(true)
+                setProcessingStatus("Saving speech to text...")
                 await saveSpeechToText.mutateAsync({ text: result.text })
-                setIsUpsertingText(false)
-                setUpsertSuccess(true)
 
-                // Extract and save todos
-                setIsExtractingTodos(true)
+                setProcessingStatus("Extracting and saving todos...")
                 await extractAndSaveTodos.mutateAsync({ text: result.text })
-                setIsExtractingTodos(false)
 
-                // Index thoughts in Pinecone
-                setIsIndexingThoughts(true)
+                setProcessingStatus("Indexing your thoughts...")
                 await upsertTranscript.mutateAsync({ text: result.text })
-                setIsIndexingThoughts(false)
 
                 // Refresh the todo list
                 getUserTodos.refetch()
@@ -170,12 +166,14 @@ export default function VoiceNotes() {
                 // Extract topics for mindmap
                 const extractedTopics = extractTopics(result.text)
                 setTopics(extractedTopics)
+
+                setProcessingStatus("Process completed successfully!")
+                setIsProcessComplete(true)
               }
             } catch (error) {
-              console.error('Transcription error:', error)
-            } finally {
-              setIsTranscribing(false)
-              setIsIndexingThoughts(false)
+              console.error('Processing error:', error)
+              setProcessingStatus("An error occurred. Please try again.")
+              setTimeout(() => setProcessingStatus(null), 2000) // Clear the error message after 2 seconds
             }
           }
         })
@@ -185,12 +183,15 @@ export default function VoiceNotes() {
 
   const startRecording = () => {
     setIsRecording(true)
+    setProcessingStatus(null)
+    setIsProcessComplete(false)
     audioChunks.current = []
     mediaRecorder.current?.start()
   }
 
   const stopRecording = () => {
     setIsRecording(false)
+    setProcessingStatus("Processing audio...")
     mediaRecorder.current?.stop()
   }
 
@@ -414,33 +415,16 @@ export default function VoiceNotes() {
                   <Mic className="w-12 h-12" />
                 )}
               </Button>
-              {isTranscribing && (
+              {processingStatus && !isProcessComplete && (
                 <div className="flex items-center justify-center space-x-2 text-casca-blue">
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Transcribing audio...</span>
+                  <span>{processingStatus}</span>
                 </div>
               )}
-              {isUpsertingText && (
-                <div className="flex items-center justify-center space-x-2 text-casca-blue">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Saving speech to text...</span>
-                </div>
-              )}
-              {isExtractingTodos && (
-                <div className="flex items-center justify-center space-x-2 text-casca-blue">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Extracting and saving todos...</span>
-                </div>
-              )}
-              {isIndexingThoughts && (
-                <div className="flex items-center justify-center space-x-2 text-casca-blue">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Indexing your thoughts...</span>
-                </div>
-              )}
-              {upsertSuccess && (
-                <div className="text-green-500 font-semibold">
-                  Speech saved successfully!
+              {isProcessComplete && (
+                <div className="flex items-center justify-center space-x-2 text-green-500">
+                  <Check className="w-5 h-5" />
+                  <span>Process completed successfully!</span>
                 </div>
               )}
             </div>
