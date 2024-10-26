@@ -2,6 +2,8 @@ import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { OpenAI } from "openai";
 import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -27,9 +29,11 @@ export const transcriptionRouter = createTRPCRouter({
         }
         const base64Data = parts[1];
 
-        // Create a temporary file
-        const tempFilePath = `/tmp/audio_${Date.now()}.webm`;
+        // Create a temporary file using os.tmpdir()
+        const tempDir = os.tmpdir();
+        const tempFilePath = path.join(tempDir, `audio_${Date.now()}.webm`);
         const buffer = Buffer.from(base64Data as string, 'base64');
+        
         await fs.promises.writeFile(tempFilePath, buffer);
 
         try {
