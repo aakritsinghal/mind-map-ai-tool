@@ -12,16 +12,20 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 from pathlib import Path
 import os
-from dotenv import load_dotenv
 from supabase import create_client
 import dj_database_url
+import environ
 
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+env = environ.Env()
+environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+OPENAI_API_KEY = env('OPENAI_API_KEY')
+
+SUPABASE_URL = env('SUPABASE_URL')
+SUPABASE_KEY = env('SUPABASE_KEY')
+DATABASE_URL = env('DATABASE_URL')
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -38,7 +42,7 @@ SECRET_KEY = 'django-insecure-c1yd1ecbx$=lkxo@iyc2x_d5l8#vx6n2@k*z+l73ppjqqp(4_u
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -52,6 +56,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'core',
+    'corsheaders',
 ]
 
 AUTHENTICATION_BACKENDS = [
@@ -68,6 +73,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
 ]
 
 ROOT_URLCONF = 'mindmapp_app.urls'
@@ -95,7 +101,7 @@ WSGI_APPLICATION = 'mindmapp_app.wsgi.application'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
 DATABASES = {
-    'default': dj_database_url.config(default=os.getenv('DATABASE_URL'))
+    'default': dj_database_url.config(default=DATABASE_URL)
 }
 
 
@@ -139,3 +145,8 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+CORS_ALLOWED_ORIGINS = [
+    "http://127.0.0.1:3000",  # Vercel localhost
+    "http://localhost:3000",  # Your frontend on localhost
+]
