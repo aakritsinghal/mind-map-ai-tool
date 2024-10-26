@@ -75,6 +75,8 @@ export default function VoiceNotes() {
   const [isIndexingThoughts, setIsIndexingThoughts] = useState(false)
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
   const [isProcessComplete, setIsProcessComplete] = useState(false);
+  const [microphonePermission, setMicrophonePermission] = useState<PermissionState | null>(null);
+  const [microphoneError, setMicrophoneError] = useState<string | null>(null);
 
   const saveSpeechToText = api.speech.saveSpeechToText.useMutation()
   const extractAndSaveTodos = api.todo.extractAndSaveTodos.useMutation()
@@ -91,6 +93,39 @@ export default function VoiceNotes() {
     { value: "2", label: "Medium", color: "text-yellow-500" },
     { value: "3", label: "Low", color: "text-green-500" },
   ]
+
+  useEffect(() => {
+    checkMicrophonePermission();
+  }, []);
+
+  const checkMicrophonePermission = async () => {
+    if ('permissions' in navigator) {
+      try {
+        const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+        setMicrophonePermission(result.state);
+        result.onchange = () => {
+          setMicrophonePermission(result.state);
+        };
+      } catch (error) {
+        console.error('Error checking microphone permission:', error);
+        setMicrophonePermission('denied');
+      }
+    } else {
+      console.warn('Permissions API not supported');
+      setMicrophonePermission('prompt');
+    }
+  };
+
+  const requestMicrophonePermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      setMicrophonePermission('granted');
+    } catch (error) {
+      console.error('Error requesting microphone permission:', error);
+      setMicrophonePermission('denied');
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
@@ -125,7 +160,7 @@ export default function VoiceNotes() {
   }, [getUserTodos.data]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && 'MediaRecorder' in window) {
+    if (microphonePermission === 'granted' && typeof window !== 'undefined' && 'MediaRecorder' in window) {
       navigator.mediaDevices.getUserMedia({ audio: true })
         .then(stream => {
           mediaRecorder.current = new MediaRecorder(stream)
@@ -177,9 +212,12 @@ export default function VoiceNotes() {
             }
           }
         })
-        .catch(err => console.error('Error accessing microphone:', err))
+        .catch(err => {
+          console.error('Error accessing microphone:', err);
+          setMicrophoneError("Unable to access microphone. Please check your browser settings and try again.");
+        });
     }
-  }, [])
+  }, [microphonePermission]);
 
   const startRecording = () => {
     setIsRecording(true)
@@ -397,24 +435,36 @@ export default function VoiceNotes() {
           </TabsList>
           <TabsContent value="voice" className="p-6">
             <div className="space-y-4 flex flex-col items-center justify-center h-64">
-              <Button
-                onClick={isRecording ? stopRecording : startRecording}
-                className={`
-                  w-24 h-24 rounded-full 
-                  flex items-center justify-center
-                  transition-all duration-300 ease-in-out
-                  ${isRecording 
-                    ? 'bg-red-50 border-4 border-red-500 text-red-500 animate-pulse' 
-                    : 'bg-white border-2 border-casca-blue text-casca-blue hover:bg-casca-blue/10'
-                  }
-                `}
-              >
-                {isRecording ? (
-                  <StopCircle className="w-12 h-12" />
-                ) : (
-                  <Mic className="w-12 h-12" />
-                )}
-              </Button>
+              {microphonePermission === 'denied' ? (
+                <div className="text-red-500 text-center">
+                  <p>Microphone access is denied. Please enable it in your browser settings.</p>
+                </div>
+              ) : microphonePermission === 'prompt' ? (
+                <Button onClick={requestMicrophonePermission} className="bg-blue-500 text-white">
+                  Allow Microphone Access
+                </Button>
+              ) : microphoneError ? (
+                <div className="text-red-500 text-center">{microphoneError}</div>
+              ) : (
+                <Button
+                  onClick={isRecording ? stopRecording : startRecording}
+                  className={`
+                    w-24 h-24 rounded-full 
+                    flex items-center justify-center
+                    transition-all duration-300 ease-in-out
+                    ${isRecording 
+                      ? 'bg-red-50 border-4 border-red-500 text-red-500 animate-pulse' 
+                      : 'bg-white border-2 border-casca-blue text-casca-blue hover:bg-casca-blue/10'
+                    }
+                  `}
+                >
+                  {isRecording ? (
+                    <StopCircle className="w-12 h-12" />
+                  ) : (
+                    <Mic className="w-12 h-12" />
+                  )}
+                </Button>
+              )}
               {processingStatus && !isProcessComplete && (
                 <div className="flex items-center justify-center space-x-2 text-casca-blue">
                   <Loader2 className="w-5 h-5 animate-spin" />
