@@ -34,7 +34,7 @@ class UploadTextView(APIView):  # Changed the view name to UploadTextView for te
         # Get transcribed text from the POST request instead of handling audio for now
         transcribed_text = request.data.get('transcription')
         # print(f"Transcribed Text: {transcribed_text}")
-        user_id = "cm2pfrfmz00001376ccihu39b" #harcoded for now, will be dynamic later - request.user.id
+        user_id = request.data.get('user_id') #harcoded for now, will be dynamic later - request.user.id
         print(f"User ID: {user_id}")
 
         if not transcribed_text:
@@ -43,11 +43,11 @@ class UploadTextView(APIView):  # Changed the view name to UploadTextView for te
         existing_main_topics = self.get_existing_main_topics(user_id)
 
         json_output = self.generate_topic_structure(transcribed_text, existing_main_topics)
-        segments = self.parse_gpt_output(json_output, user_id)
+        self.parse_gpt_output(json_output, user_id)
 
-        cache.set(f'latest_mind_map_{user_id}', segments, timeout=None)
+        cache.set(f'latest_mind_map_{user_id}', {"status: processed"}, timeout=None)
 
-        return Response(segments)
+        return Response(status=200)
     
     def get_existing_main_topics(self, user_id):
         """Fetch all existing main topics for a user from the database."""
@@ -114,7 +114,7 @@ class UploadTextView(APIView):  # Changed the view name to UploadTextView for te
                 main_topic_embedding = generate_openai_embedding(main_topic["name"])
 
                 # Check if main topic already exists
-                existing_main_topic = self.find_similar_topic(main_topic_embedding, user_id, topic_type="main", threshold=0.5)
+                existing_main_topic = self.find_similar_topic(main_topic_embedding, user_id, topic_type="main", threshold=0.95)
                 if existing_main_topic:
                     main_topic_node = existing_main_topic
                 else:
@@ -128,14 +128,25 @@ class UploadTextView(APIView):  # Changed the view name to UploadTextView for te
                 for subtopic in main_topic.get("subtopics", []):
                     subtopic_embedding = generate_openai_embedding(subtopic["name"])
 
-                    subtopic_node = self.save_node(
-                        user_id=user_id,
-                        name=subtopic["name"],
-                        type="subtopic",
-                        embedding=subtopic_embedding,
-                        parent_id=main_topic_node["id"],
-                        info_points=subtopic.get("details", [])
-                    )
+                    #checking if similar subtopic already exists
+                    existing_subtopic = self.find_similar_topic(subtopic_embedding, user_id, topic_type="subtopic", parent_id=main_topic_node["id"], threshold=0.85)
+                    if existing_subtopic:
+                        subtopic_node = existing_subtopic
+                        new_info_points = [point for point in subtopic.get("details", []) if point not in subtopic_node["info_points"]]
+                        if new_info_points:
+                            updated_info_points = subtopic_node["info_points"] + new_info_points
+                            # Update existing subtopic in database
+                            supabase.table("MindMapNode").update({"info_points": updated_info_points}).eq("id", subtopic_node["id"]).execute()
+                            subtopic_node["info_points"] = updated_info_points  # Update local representation
+                    else:
+                        subtopic_node = self.save_node(
+                            user_id=user_id,
+                            name=subtopic["name"],
+                            type="subtopic",
+                            embedding=subtopic_embedding,
+                            parent_id=main_topic_node["id"],
+                            info_points=subtopic.get("details", [])
+                        )
                     if subtopic_node:
                         nodes.append(subtopic_node)
                         all_subtopics.append(subtopic_node)
@@ -227,7 +238,7 @@ class UploadTextView(APIView):  # Changed the view name to UploadTextView for te
 
 class MindMapView(APIView):
     def get(self, request, *args, **kwargs):
-        user_id = "cm2pfrfmz00001376ccihu39b" #should be request.user.id
+        user_id = request.data.get('user_id') #should be request.user.id
         mind_map = cache.get(f'latest_mind_map_{user_id}')
         if mind_map is None:
             return Response({"error": "No mind map available."}, status=404)

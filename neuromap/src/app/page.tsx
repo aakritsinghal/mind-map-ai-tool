@@ -207,11 +207,11 @@ export default function VoiceNotes() {
                 setProcessingStatus("Saving speech to text...")
                 await saveSpeechToText.mutateAsync({ text: result.text })
 
+                setProcessingStatus("Updating Mind Map with new thoughts...")
+                await upsertTranscript.mutateAsync({ text: result.text })
+
                 setProcessingStatus("Extracting and saving todos...")
                 await extractAndSaveTodos.mutateAsync({ text: result.text })
-
-                setProcessingStatus("Indexing your thoughts...")
-                await upsertTranscript.mutateAsync({ text: result.text })
 
                 // Refresh the todo list
                 getUserTodos.refetch()
@@ -525,8 +525,8 @@ export default function VoiceNotes() {
               )}
             </div>
           </TabsContent>
-          <TabsContent value="mindmap" className="p-6">
-            <div className="bg-white bg-opacity-50 rounded-xl p-4 h-150">
+          <TabsContent value="mindmap" className="p-6 h-[calc(100vh-250px)]">
+            <div className="bg-white rounded-xl p-4 h-full">
               {mindMapData ? (
                 <MindMapModal nodes={mindMapData.nodes} edges={mindMapData.edges} />
               ) : (
