@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useSession, signIn, signOut } from "next-auth/react"
-import { Mic, StopCircle, BrainCircuit, CheckSquare, Plus, ChevronDown, ChevronRight, Trash2, LogIn, LogOut, Loader2, Flag, MessageSquare, Send, CameraIcon } from 'lucide-react'
+import { Mic, StopCircle, BrainCircuit, CheckSquare, Plus, ChevronDown, ChevronRight, Trash2, LogIn, LogOut, Loader2, Flag, MessageSquare, Send, CameraIcon, Check } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -10,6 +10,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { api } from "@/trpc/react"
 import { cn } from "@/lib/utils"
+import MindMapGraph from "@/components/ui/MindMapGraph"
+import MindMapModal from "@/components/ui/MindMapModal"
 
 // Simulated AI function to extract topics from text
 const extractTopics = (text: string) => {
@@ -26,6 +28,7 @@ type Task = {
   isExpanded: boolean;
   isSubtask?: boolean; // Add this to match the server response
 };
+
 
 // Add this new component for a custom SelectItem
 const PrioritySelectItem = React.forwardRef<HTMLDivElement, React.ComponentPropsWithoutRef<typeof SelectItem> & { icon: React.ReactNode }>(
@@ -72,6 +75,11 @@ export default function VoiceNotes() {
   const [streamingMessage, setStreamingMessage] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [isIndexingThoughts, setIsIndexingThoughts] = useState(false)
+  const [processingStatus, setProcessingStatus] = useState<string | null>(null);
+  const [isProcessComplete, setIsProcessComplete] = useState(false);
+  const [microphonePermission, setMicrophonePermission] = useState<PermissionState | null>(null);
+  const [microphoneError, setMicrophoneError] = useState<string | null>(null);
+  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
 
   const saveSpeechToText = api.speech.saveSpeechToText.useMutation()
   const [extractedText, setExtractedText] = useState<string>('');
@@ -88,6 +96,14 @@ export default function VoiceNotes() {
   const transcribeAudio = api.transcription.transcribeAudio.useMutation()
   const mindchatMutation = api.mindchat.chat.useMutation()
   const upsertTranscript = api.pinecone.upsertTranscript.useMutation()
+
+  const userId = session?.user?.id || ''
+
+  const [mindMapData, setMindMapData] = useState<{ nodes: any[]; edges: any[] } | null>(null);
+  const getMindMap = api.mindMap.getMindMap.useQuery(
+    { userId: session?.user?.id },
+    { enabled: !!session?.user?.id }
+  );
 
   const priorityOptions = [
     { value: "1", label: "High", color: "text-red-500" },
@@ -157,6 +173,39 @@ export default function VoiceNotes() {
   
 
   useEffect(() => {
+    checkMicrophonePermission();
+  }, []);
+
+  const checkMicrophonePermission = async () => {
+    if ('permissions' in navigator) {
+      try {
+        const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+        setMicrophonePermission(result.state);
+        result.onchange = () => {
+          setMicrophonePermission(result.state);
+        };
+      } catch (error) {
+        console.error('Error checking microphone permission:', error);
+        setMicrophonePermission('denied');
+      }
+    } else {
+      console.warn('Permissions API not supported');
+      setMicrophonePermission('prompt');
+    }
+  };
+
+  const requestMicrophonePermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      setMicrophonePermission('granted');
+    } catch (error) {
+      console.error('Error requesting microphone permission:', error);
+      setMicrophonePermission('denied');
+    }
+  };
+
+  useEffect(() => {
     if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
       recognitionRef.current = new SpeechRecognition()
@@ -174,6 +223,12 @@ export default function VoiceNotes() {
   }, [])
 
   useEffect(() => {
+    if (getMindMap.data) {
+      setMindMapData(getMindMap.data);
+    }
+  }, [getMindMap.data]);
+
+  useEffect(() => {
     if (getUserTodos.data) {
       setTasks(getUserTodos.data.map(todo => ({
         ...todo,
@@ -189,7 +244,7 @@ export default function VoiceNotes() {
   }, [getUserTodos.data]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && 'MediaRecorder' in window) {
+    if (microphonePermission === 'granted' && typeof window !== 'undefined' && 'MediaRecorder' in window) {
       navigator.mediaDevices.getUserMedia({ audio: true })
         .then(stream => {
           mediaRecorder.current = new MediaRecorder(stream)
@@ -202,7 +257,7 @@ export default function VoiceNotes() {
             const audioBlob = new Blob(audioChunks.current, { type: 'audio/webm' })
             audioChunks.current = []
             
-            setIsTranscribing(true)
+            setProcessingStatus("Processing audio...")
             try {
               const audioFile = new File([audioBlob], "recording.webm", { type: 'audio/webm' })
               
@@ -211,24 +266,18 @@ export default function VoiceNotes() {
               reader.onloadend = async () => {
                 const base64Audio = reader.result as string;
                 
+                setProcessingStatus("Transcribing audio...")
                 const result = await transcribeAudio.mutateAsync({ audio: base64Audio });
                 setTranscript(result.text)
 
-                // Save speech to text
-                setIsUpsertingText(true)
+                setProcessingStatus("Saving speech to text...")
                 await saveSpeechToText.mutateAsync({ text: result.text })
-                setIsUpsertingText(false)
-                setUpsertSuccess(true)
 
-                // Extract and save todos
-                setIsExtractingTodos(true)
+                setProcessingStatus("Extracting and saving todos...")
                 await extractAndSaveTodos.mutateAsync({ text: result.text })
-                setIsExtractingTodos(false)
 
-                // Index thoughts in Pinecone
-                setIsIndexingThoughts(true)
+                setProcessingStatus("Indexing your thoughts...")
                 await upsertTranscript.mutateAsync({ text: result.text })
-                setIsIndexingThoughts(false)
 
                 // Refresh the todo list
                 getUserTodos.refetch()
@@ -236,27 +285,35 @@ export default function VoiceNotes() {
                 // Extract topics for mindmap
                 const extractedTopics = extractTopics(result.text)
                 setTopics(extractedTopics)
+
+                setProcessingStatus("Process completed successfully!")
+                setIsProcessComplete(true)
               }
             } catch (error) {
-              console.error('Transcription error:', error)
-            } finally {
-              setIsTranscribing(false)
-              setIsIndexingThoughts(false)
+              console.error('Processing error:', error)
+              setProcessingStatus("An error occurred. Please try again.")
+              setTimeout(() => setProcessingStatus(null), 2000) // Clear the error message after 2 seconds
             }
           }
         })
-        .catch(err => console.error('Error accessing microphone:', err))
+        .catch(err => {
+          console.error('Error accessing microphone:', err);
+          setMicrophoneError("Unable to access microphone. Please check your browser settings and try again.");
+        });
     }
-  }, [])
+  }, [microphonePermission]);
 
   const startRecording = () => {
     setIsRecording(true)
+    setProcessingStatus(null)
+    setIsProcessComplete(false)
     audioChunks.current = []
     mediaRecorder.current?.start()
   }
 
   const stopRecording = () => {
     setIsRecording(false)
+    setProcessingStatus("Processing audio...")
     mediaRecorder.current?.stop()
   }
 
@@ -301,22 +358,41 @@ export default function VoiceNotes() {
     }))
   }
 
+  const deleteTodoMutation = api.todo.deleteTodo.useMutation({
+    onSuccess: () => {
+      // Refetch todos after successful deletion
+      getUserTodos.refetch();
+    },
+  });
+
   const deleteTask = async (id: string, parentId: string | null = null) => {
+    setDeletingTaskId(id);
     try {
-      await api.todo.deleteTodo.mutate({ id });
-      if (parentId) {
-        setTasks(tasks.map(task => {
-          if (task.id === parentId) {
-            return { ...task, subtasks: task.subtasks.filter(subtask => subtask.id !== id) };
-          }
-          return task;
-        }));
-      } else {
-        setTasks(tasks.filter(task => task.id !== id));
-      }
-      getUserTodos.refetch(); // Refetch todos after deleting a task
+      await deleteTodoMutation.mutateAsync({ id });
+      
+      // Update the frontend state
+      setTasks(prevTasks => {
+        const updateSubtasks = (tasks: Task[]): Task[] => {
+          return tasks.map(task => ({
+            ...task,
+            subtasks: task.subtasks.filter(subtask => subtask.id !== id)
+          }));
+        };
+
+        if (parentId) {
+          return prevTasks.map(task => 
+            task.id === parentId
+              ? { ...task, subtasks: updateSubtasks(task.subtasks) }
+              : task
+          );
+        } else {
+          return prevTasks.filter(task => task.id !== id);
+        }
+      });
     } catch (error) {
       console.error('Error deleting task:', error);
+    } finally {
+      setDeletingTaskId(null);
     }
   };
 
@@ -363,8 +439,17 @@ export default function VoiceNotes() {
               task.priority === 2 ? "text-yellow-500" : "text-green-500"
             )}
           />
-          <Button onClick={() => deleteTask(task.id, parentId)} variant="ghost" size="sm">
-            <Trash2 className="w-4 h-4" />
+          <Button 
+            onClick={() => deleteTask(task.id, parentId)} 
+            variant="ghost" 
+            size="sm"
+            disabled={deletingTaskId === task.id}
+          >
+            {deletingTaskId === task.id ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Trash2 className="w-4 h-4" />
+            )}
           </Button>
         </div>
       </div>
@@ -466,51 +551,46 @@ export default function VoiceNotes() {
         </TabsList>
           <TabsContent value="voice" className="p-6">
             <div className="space-y-4 flex flex-col items-center justify-center h-64">
-              <Button
-                onClick={isRecording ? stopRecording : startRecording}
-                className={`
-                  w-24 h-24 rounded-full 
-                  flex items-center justify-center
-                  transition-all duration-300 ease-in-out
-                  ${isRecording 
-                    ? 'bg-red-50 border-4 border-red-500 text-red-500 animate-pulse' 
-                    : 'bg-white border-2 border-casca-blue text-casca-blue hover:bg-casca-blue/10'
-                  }
-                `}
-              >
-                {isRecording ? (
-                  <StopCircle className="w-12 h-12" />
-                ) : (
-                  <Mic className="w-12 h-12" />
-                )}
-              </Button>
-              {isTranscribing && (
+              {microphonePermission === 'denied' ? (
+                <div className="text-red-500 text-center">
+                  <p>Microphone access is denied. Please enable it in your browser settings.</p>
+                </div>
+              ) : microphonePermission === 'prompt' ? (
+                <Button onClick={requestMicrophonePermission} className="bg-blue-500 text-white">
+                  Allow Microphone Access
+                </Button>
+              ) : microphoneError ? (
+                <div className="text-red-500 text-center">{microphoneError}</div>
+              ) : (
+                <Button
+                  onClick={isRecording ? stopRecording : startRecording}
+                  className={`
+                    w-24 h-24 rounded-full 
+                    flex items-center justify-center
+                    transition-all duration-300 ease-in-out
+                    ${isRecording 
+                      ? 'bg-red-50 border-4 border-red-500 text-red-500 animate-pulse' 
+                      : 'bg-white border-2 border-casca-blue text-casca-blue hover:bg-casca-blue/10'
+                    }
+                  `}
+                >
+                  {isRecording ? (
+                    <StopCircle className="w-12 h-12" />
+                  ) : (
+                    <Mic className="w-12 h-12" />
+                  )}
+                </Button>
+              )}
+              {processingStatus && !isProcessComplete && (
                 <div className="flex items-center justify-center space-x-2 text-casca-blue">
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Transcribing audio...</span>
+                  <span>{processingStatus}</span>
                 </div>
               )}
-              {isUpsertingText && (
-                <div className="flex items-center justify-center space-x-2 text-casca-blue">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Saving speech to text...</span>
-                </div>
-              )}
-              {isExtractingTodos && (
-                <div className="flex items-center justify-center space-x-2 text-casca-blue">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Extracting and saving todos...</span>
-                </div>
-              )}
-              {isIndexingThoughts && (
-                <div className="flex items-center justify-center space-x-2 text-casca-blue">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Indexing your thoughts...</span>
-                </div>
-              )}
-              {upsertSuccess && (
-                <div className="text-green-500 font-semibold">
-                  Speech saved successfully!
+              {isProcessComplete && (
+                <div className="flex items-center justify-center space-x-2 text-green-500">
+                  <Check className="w-5 h-5" />
+                  <span>Process completed successfully!</span>
                 </div>
               )}
             </div>
@@ -582,28 +662,13 @@ export default function VoiceNotes() {
 
 
           <TabsContent value="mindmap" className="p-6">
-            <div className="bg-white bg-opacity-50 rounded-xl p-4 h-96 flex items-center justify-center">
-              <svg width="100%" height="100%" viewBox="0 0 500 500">
-                <circle cx="250" cy="250" r="100" fill="rgba(147, 51, 234, 0.5)" />
-                {topics.map((topic, index) => {
-                  const angle = (index / topics.length) * Math.PI * 2
-                  const x = 250 + Math.cos(angle) * 150
-                  const y = 250 + Math.sin(angle) * 150
-                  return (
-                    <g key={index}>
-                      <line x1="250" y1="250" x2={x} y2={y} stroke="rgba(147, 51, 234, 0.5)" strokeWidth="2" />
-                      <circle cx={x} cy={y} r="40" fill="rgba(59, 130, 246, 0.5)" />
-                      <text x={x} y={y} textAnchor="middle" dy=".3em" fill="white" fontSize="12">
-                        {topic}
-                      </text>
-                    </g>
-                  )
-                })}
-                <text x="250" y="250" textAnchor="middle" dy=".3em" fill="white" fontSize="16">
-                  Main Topic
-                </text>
-              </svg>
-            </div>
+            <div className="bg-white bg-opacity-50 rounded-xl p-4 h-150">
+              {mindMapData ? (
+                <MindMapModal nodes={mindMapData.nodes} edges={mindMapData.edges} />
+              ) : (
+                <div>Loading mind map...</div>
+              )}
+          </div>
           </TabsContent>
           <TabsContent value="todo" className="p-6">
             <div className="space-y-4">

@@ -20,9 +20,25 @@ const handler = NextAuth({
         });
 
         if (existingUser) {
-          // If the user exists but doesn't have a linked Google account
-          if (existingUser.accounts.length === 0) {
-            // Link the Google account to the existing user
+          // Check if the user has a linked Google account
+          const linkedAccount = existingUser.accounts.find(
+            (acc: { provider: string }) => acc.provider === "google"
+          );
+
+          if (linkedAccount) {
+            // Update the existing Google account with new tokens
+            await db.account.update({
+              where: { id: linkedAccount.id },
+              data: {
+                access_token: account.access_token,
+                expires_at: account.expires_at,
+                refresh_token: account.refresh_token,
+                id_token: account.id_token,
+                session_state: account.session_state,
+              },
+            });
+          } else {
+            // If no linked Google account, create a new one
             await db.account.create({
               data: {
                 userId: existingUser.id,
@@ -38,7 +54,6 @@ const handler = NextAuth({
                 session_state: account.session_state,
               },
             });
-            return true;
           }
         } else {
           // If the user doesn't exist, create a new user

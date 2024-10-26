@@ -7,6 +7,7 @@ import { getTodoRouter } from './routers/todoRouter'
 import { transcriptionRouter } from './routers/transcribeAudio'
 import { mindchatRouter } from "./routers/mindchat";
 import { pineconeRouter } from "~/server/api/routers/pinecone";
+import {mindMapRouter} from "~/server/api/routers/mindMap";
 
 /**
  * This is the primary router for your server.
@@ -22,6 +23,7 @@ export const appRouter = createTRPCRouter({
   transcription: transcriptionRouter,
   mindchat: mindchatRouter,
   pinecone: pineconeRouter,
+  mindMap: mindMapRouter
 });
 
 // export type definition of API
