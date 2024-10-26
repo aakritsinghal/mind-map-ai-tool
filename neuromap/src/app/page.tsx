@@ -595,6 +595,7 @@ export default function VoiceNotes() {
               )}
             </div>
           </TabsContent>
+
           <TabsContent value="image" className="p-6">
             <div className="space-y-4 flex flex-col items-center">
               <form onSubmit={handleImageUpload} className="flex flex-col items-center space-y-4 w-full max-w-md bg-white p-6 rounded-lg shadow-md border border-gray-200">
@@ -658,7 +659,6 @@ export default function VoiceNotes() {
               )}
             </div>
           </TabsContent>
-
 
 
           <TabsContent value="mindmap" className="p-6 h-[calc(100vh-250px)]">
