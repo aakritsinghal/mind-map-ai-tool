@@ -43,6 +43,7 @@ model User {
   accounts      Account[]
   sessions      Session[]
   speechToTexts SpeechToText[]
+  imageToTexts  ImageToText[]
   Todo          Todo[]
   MindMapEdge   MindMapEdge[]
   MindMapNode   MindMapNode[]
