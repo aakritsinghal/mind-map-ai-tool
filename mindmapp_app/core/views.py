@@ -35,7 +35,7 @@ class UploadTextView(APIView):  # Changed the view name to UploadTextView for te
         transcribed_text = request.data.get('transcription')
         # print(f"Transcribed Text: {transcribed_text}")
         user_id = request.data.get('user_id') #harcoded for now, will be dynamic later - request.user.id
-        print(f"User ID: {user_id}")
+        # print(f"User ID: {user_id}")
 
         if not transcribed_text:
             return Response({"error": "No transcription provided."}, status=400)
@@ -103,7 +103,7 @@ class UploadTextView(APIView):  # Changed the view name to UploadTextView for te
 
     # Parse the output from GPT-4 into segments (main topics, subtopics, info points)
     def parse_gpt_output(self, json_output, user_id):
-        print("GPT-4 JSON Output: ", json_output)
+        # print("GPT-4 JSON Output: ", json_output)
         try:
             mind_map_data = json.loads(json_output)
             nodes, edges = [], []
