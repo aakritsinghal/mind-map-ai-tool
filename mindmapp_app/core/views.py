@@ -165,11 +165,6 @@ class UploadTextView(APIView):  # Changed the view name to UploadTextView for te
                         if existing_edge.data:
                             continue
                         edge = self.save_edge(user_id, sub1["id"], sub2["id"])
-                        if edge:
-                            edges.append(edge)
-                        
-
-            return {"nodes": nodes, "edges": edges}
 
         except json.JSONDecodeError:
             return {"error": "Invalid JSON format returned from GPT"}
