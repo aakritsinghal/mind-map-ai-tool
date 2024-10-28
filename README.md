@@ -20,7 +20,7 @@ MetaMind is built using a mix of frontend and backend technologies:
 - **Data Management:** Supabase with PostgreSQL for structured data storage, paired with Pinecone as a vector database for efficient memory retrieval.
 - **Voice Processing:** Google Speech-to-Text API transcribes voice inputs, extracting topics and action items.
 - **Image Processing:** Google’s OCR technology converts text from uploaded images, integrating with the mind map and task list creation process.
-- **AI & Natural Language Processing:** GPT-4 by OpenAI powers key functions like identifying action items, topics, and subtopics, and enables dynamic interactions in the MindChat feature.
+- **AI & Natural Language Processing:** GPT-4 by OpenAI powers key functions like identifying action items, topics, and subtopics, and enables dynamic interactions in the MindChat feature of the application.
 
 ## How We Built It
 
